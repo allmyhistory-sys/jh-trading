@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 import requests
 from bs4 import BeautifulSoup
 import re
-from datetime import datetime, timedelta
 
 # 📱 모바일 최적화 레이아웃
 st.set_page_config(layout="centered", page_title="📱 JH 모바일 타격대")
@@ -14,11 +13,10 @@ st.set_page_config(layout="centered", page_title="📱 JH 모바일 타격대")
 # 📌 종목 데이터베이스
 KOSPI_STOCKS = {
     "[반도체] 삼성전자": "005930.KS", "[반도체] SK하이닉스": "000660.KS", "[반도체] 한미반도체": "042700.KS",
-    "[방산] 한화에어로스페이스": "012450.KS", "[방산] 한국항공우주": "047810.KS", "[방산] LIG넥스원": "079550.KS", "[방산] 현대로템": "064350.KS",
-    "[원전] 두산에너빌리티": "034020.KS", "[원전] 한전기술": "052690.KS", "[원전] 한전KPS": "051600.KS",
-    "[바이오] 삼성바이오로직스": "207940.KS", "[바이오] 셀트리온": "068270.KS", "[바이오] 유한양행": "000100.KS",
-    "[증권] 키움증권": "039490.KS", "[증권] 미래에셋증권": "006800.KS", "[증권] 한국금융지주": "071050.KS",
-    "[친환경] 씨에스윈드": "112610.KS", "[친환경] 한화솔루션": "009830.KS", "[친환경] OCI홀딩스": "010060.KS", "[친환경] 두산퓨얼셀": "241560.KS"
+    "[방산] 한화에어로": "012450.KS", "[방산] 한국항공우주": "047810.KS", "[방산] LIG넥스원": "079550.KS", "[방산] 현대로템": "064350.KS",
+    "[원전] 두산에너빌": "034020.KS", "[원전] 한전기술": "052690.KS", "[원전] 한전KPS": "051600.KS",
+    "[바이오] 삼바": "207940.KS", "[바이오] 셀트리온": "068270.KS", "[바이오] 유한양행": "000100.KS",
+    "[증권] 키움증권": "039490.KS", "[증권] 미래에셋": "006800.KS", "[증권] 한국금융지주": "071050.KS"
 }
 KOSDAQ_STOCKS = {
     "[반도체] 리노공업": "058470.KQ", "[반도체] HPSP": "403870.KQ", "[반도체] 이오테크닉스": "039030.KQ",
@@ -64,9 +62,9 @@ def auto_market_stage(kpi_adr, kdq_adr):
     def get_stage(ticker, adr):
         df = yf.Ticker(ticker).history(period="3mo")
         if len(df) < 20: return "분석 불가"
-        curr = float(df['Close'].iloc[-1])
-        ma5 = float(df['Close'].rolling(5).mean().iloc[-1])
-        ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
+        curr = df['Close'].iloc[-1]
+        ma5 = df['Close'].rolling(5).mean().iloc[-1]
+        ma20 = df['Close'].rolling(20).mean().iloc[-1]
         if curr > ma5 and ma5 > ma20 and adr >= 100: return "🟢 [Stage 2] 공격 (리턴/종베)"
         elif curr < ma20 or adr <= 75: return "🔴 [Stage 3] 수비 (변곡 대기)"
         else: return "🟡 [Stage 1] 순환매 (JH존)"
@@ -165,24 +163,37 @@ with t1:
         st.plotly_chart(fig_q, use_container_width=True)
 
 with t2:
-    st.subheader("🤖 타점 계산기 (HTS 연동)")
+    st.subheader("🤖 타점 계산기 (NXT 연동)")
     all_s = {**KOSPI_STOCKS, **KOSDAQ_STOCKS}
     t_name = st.selectbox("종목 선택", list(all_s.keys()))
     t_sym = all_s[t_name]
     
     is_v, val, is_a, curr, hi, lo, ma5, m60, m120 = auto_stock_filter(t_sym)
     
-    st.metric("현재가", f"{curr:,.0f}원", f"고점: {hi:,.0f} / 저점: {lo:,.0f}")
+    st.metric("KRX 정규장 종가", f"{curr:,.0f}원", f"고가: {hi:,.0f} / 저가: {lo:,.0f}")
     
     v_col, a_col = st.columns(2)
     v_col.metric("대금", f"{val:,.0f}억", "PASS" if is_v else "FAIL")
-    if m120 == 0: a_col.metric("정배열", "데이터 부족")
-    else: a_col.metric("정배열", "✅ 통과" if is_a else "❌ 깨짐")
+    if m120 == 0: 
+        a_col.metric("정배열", "데이터 부족")
+    else: 
+        align_str = f"{curr:,.0f} > {m60:,.0f} > {m120:,.0f}" if is_a else f"{curr:,.0f} | {m60:,.0f} | {m120:,.0f}"
+        a_col.metric("정배열", "✅ 통과" if is_a else "❌ 깨짐", align_str)
     
     st.divider()
-    st.info(f"**🛡️ 수비 (JH존)**\n- 1차(-4%): {hi*0.96:,.0f}원\n- 2차(-6%): {hi*0.94:,.0f}원\n- 3차(-8%): {hi*0.92:,.0f}원")
-    st.success(f"**⚔️ 공격 (리턴)**\n- 60선: {m60:,.0f}원")
-    st.error(f"**💣 필살 (변곡)**\n- 피보 0.5: {hi-((hi-lo)*0.5):,.0f}원")
     
-    st.caption(f"📊 {t_name} 현재 차트 상태:\n현재({curr:,.0f}) | 60선({m60:,.0f}) | 120선({m120:,.0f})")
-
+    st.caption("💡 NXT 저녁 8시 마감가를 입력하면 타점이 보정됩니다.")
+    nxt_price = st.number_input(f"🌙 NXT 최종 체결가 입력", value=int(curr), step=50)
+    
+    base_price = nxt_price if nxt_price > 0 else curr
+    actual_high = max(hi, base_price) 
+    
+    nxt_gap = ((base_price - curr) / curr) * 100 if curr > 0 else 0
+    if nxt_gap != 0:
+        st.caption(f"※ KRX 정규장 대비 NXT 프리미엄: **{nxt_gap:+.2f}%** 타점 반영 완료")
+    
+    st.info(f"🛡️ **JH존(수비) - NXT 반영**\n- 1차(-4%): {actual_high*0.96:,.0f}원\n- 2차(-6%): {actual_high*0.94:,.0f}원\n- 3차(-8%): {actual_high*0.92:,.0f}원")
+    st.success(f"⚔️ **리턴(공격)**\n- 60선: {m60:,.0f}원")
+    
+    fibo_05 = actual_high - ((actual_high - lo) * 0.5)
+    st.error(f"💣 **변곡(필살)**\n- 피보 0.5: {fibo_05:,.0f}원")
