@@ -104,13 +104,13 @@ def search_stock_ultimate(keyword):
 def auto_market_stage_impl(kpi_adr, kdq_adr):
     def get_stage(ticker, adr):
         df = yf.Ticker(ticker).history(period="3mo")
-        if len(df) < 20: return "분석 불가"
+        if len(df) < 20: return "분석 불가", "데이터 부족"
         curr = float(df['Close'].iloc[-1]); ma5 = float(df['Close'].rolling(5).mean().iloc[-1]); ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
-        if curr > ma5 and ma5 > ma20 and adr >= 100: return "🟢 [Stage 2] 공격 (리턴/종베)"
-        elif curr < ma20 or adr <= 75: return "🔴 [Stage 3] 수비 (변곡 대기)"
-        else: return "🟡 [Stage 1] 순환매 (JH존)"
-    kpi_t = get_stage("^KS11", kpi_adr); kdq_t = get_stage("^KQ11", kdq_adr)
-    return kpi_t, kdq_t
+        if curr > ma5 and ma5 > ma20 and adr >= 100: return "🟢 [Stage 2] 공격 (리턴/종베)", "Stage 2"
+        elif curr < ma20 or adr <= 75: return "🔴 [Stage 3] 수비 (변곡 대기)", "Stage 3"
+        else: return "🟡 [Stage 1] 순환매 (JH존)", "Stage 1"
+    kpi_ui, kpi_t = get_stage("^KS11", kpi_adr); kdq_ui, kdq_t = get_stage("^KQ11", kdq_adr)
+    return kpi_ui, kdq_ui, kpi_t, kdq_t
 
 @st.cache_data(ttl=2)
 def fetch_realtime_naver(ticker):
@@ -161,27 +161,55 @@ def auto_stock_filter(ticker):
             
     return is_v_ok, val_100m, is_a, curr_p, high_p, low_p, ma5_d, m60, m120
 
+# 🌟 시스템 자동 복기 로직 (모바일 부활)
+def generate_trader_view(kpi_stage, kdq_stage, cushion_val, data, kpi_adr, kdq_adr):
+    best_kpi, best_kpi_rs = "판단불가", -999
+    try:
+        for name, sym in KOSPI_STOCKS.items():
+            if sym in data.columns:
+                rs = (data[sym].iloc[-1]/data["^KS11"].iloc[-1])/(data[sym].dropna().iloc[0]/data["^KS11"].dropna().iloc[0])*100
+                if rs > best_kpi_rs: best_kpi, best_kpi_rs = name, rs
+    except: pass
+    
+    best_kdq, best_kdq_rs = "판단불가", -999
+    try:
+        for name, sym in KOSDAQ_STOCKS.items():
+            if sym in data.columns:
+                rs = (data[sym].iloc[-1]/data["^KQ11"].iloc[-1])/(data[sym].dropna().iloc[0]/data["^KQ11"].dropna().iloc[0])*100
+                if rs > best_kdq_rs: best_kdq, best_kdq_rs = name, rs
+    except: pass
+
+    q1 = f"[원인] KOSPI ADR {kpi_adr}% ({kpi_stage}), KOSDAQ ADR {kdq_adr}% ({kdq_stage}) 판독.\n[결과] 지수 이평선과 ADR 에너지를 교차 검증한 결과, 현재 국면에 맞는 전략적 무기만 꺼내야 함."
+    q2 = f"[원인] 오늘 시장 대비 상대강도가 가장 강력한 주도주는 KOSPI '{best_kpi}'(RS: {best_kpi_rs:.1f}), KOSDAQ '{best_kdq}'(RS: {best_kdq_rs:.1f})임.\n[결과] 돈의 쏠림이 확인된 대장주 안에서만 타점을 노리며, RS가 낮은 종목은 철저히 배제함."
+    q3 = f"내일의 시나리오: {kpi_stage} 및 {kdq_stage} 국면이므로 " + ("공격적 리턴 매매" if "Stage 2" in str(kpi_stage) else "JH존 수비 매매" if "Stage 1" in str(kpi_stage) else "변곡 투매 매매") + "에 집중함."
+    q4 = f"[원인] 이번 달 누적 수익 {cushion_val}만 원.\n[결과] " + ("수익 담보가 있으므로 주도주 눌림목에 공격적 비중 확대(불타기) 가능." if cushion_val > 0 else "쿠션이 없으므로 비중 50% 축소 및 철저한 원금 방어 모드 돌입.")
+    return q1, q2, q3, q4
+
 # --- 📱 모바일 UI 구성 ---
 st.title("🦅 JH 모바일 타격대")
 
-with st.expander("🕒 장전 탑다운 시황 및 비중", expanded=False):
+# 🌟 상단 폴더 안에 '누적 수익' 입력칸 추가
+with st.expander("🕒 장전 시황 및 비중 조절", expanded=False):
     brief = get_briefing()
     if not brief:
         st.warning("🔄 데이터를 불러오고 있습니다.")
     else:
         for n, (p, pct) in brief.items():
             st.metric(n, f"{p:,.2f}", f"{pct:.2f}%")
+    st.divider()
+    cushion = st.number_input("이번 달 누적 수익(만 원)", value=0, step=10)
 
 data = get_main_data()
 k_adr, q_adr = fetch_real_adr()
-k_st, q_st = auto_market_stage_impl(k_adr, q_adr)
+k_ui, q_ui, k_st, q_st = auto_market_stage_impl(k_adr, q_adr)
 
-t1, t2 = st.tabs(["📊 시장 & RS", "⚔️ 타점 & 검색"])
+# 🌟 모바일 탭을 3개로 분할
+t1, t2, t3 = st.tabs(["📊 시장&RS", "⚔️ 타점검색", "📝 복기"])
 
 with t1:
     st.subheader("1. Market Stage")
-    st.info(f"🔵 **KOSPI:** {k_adr}% | {k_st}")
-    st.warning(f"🟡 **KOSDAQ:** {q_adr}% | {q_st}")
+    st.info(f"🔵 **KOSPI:** {k_adr}% | {k_ui}")
+    st.warning(f"🟡 **KOSDAQ:** {q_adr}% | {q_ui}")
     
     st.subheader("2. 실시간 ADR 차트")
     components.iframe("http://adrinfo.kr/chart", height=280, scrolling=True)
@@ -266,3 +294,10 @@ with t2:
         st.success(f"⚔️ **리턴(공격)**\n\n60선: **{m60:,.0f}원**")
         fibo_05 = actual_high - ((actual_high - lo) * 0.5)
         st.error(f"💣 **변곡(필살)**\n\n피보 0.5: **{fibo_05:,.0f}원**")
+
+# 🌟 모바일 전용 자동 복기 화면 렌더링
+with t3:
+    st.subheader("📝 시스템 자동 복기")
+    ans = generate_trader_view(k_st, q_st, cushion, data, k_adr, q_adr)
+    for i, txt in enumerate(ans):
+        st.text_area(f"단계 {i+1}", txt, height=120)
