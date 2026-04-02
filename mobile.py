@@ -70,7 +70,6 @@ def search_stock_ultimate(keyword):
     keyword = keyword.strip()
     if not keyword: return None, None, None, "검색어가 없습니다."
     
-    # 1. 6자리 숫자 다이렉트 입력 
     if keyword.isdigit() and len(keyword) == 6:
         code = keyword
         if not yf.Ticker(f"{code}.KQ").history(period="1d").empty:
@@ -79,7 +78,6 @@ def search_stock_ultimate(keyword):
             return f"{code}.KS", code, f"종목코드 {code}", "SUCCESS"
         return None, None, None, f"코드 '{code}' 의 차트 데이터가 존재하지 않습니다."
 
-    # 2. 한글 검색 (네이버 메인 검색 우회 + 압축 해제 에러 방어)
     keyword = unicodedata.normalize('NFC', keyword)
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
@@ -161,26 +159,44 @@ def auto_stock_filter(ticker):
             
     return is_v_ok, val_100m, is_a, curr_p, high_p, low_p, ma5_d, m60, m120
 
-# 🌟 시스템 자동 복기 로직 (모바일 부활)
+# 🌟 빈칸(NaN) 에러를 방어하는 무적의 RS 판독 엔진으로 교체!
 def generate_trader_view(kpi_stage, kdq_stage, cushion_val, data, kpi_adr, kdq_adr):
     best_kpi, best_kpi_rs = "판단불가", -999
-    try:
-        for name, sym in KOSPI_STOCKS.items():
-            if sym in data.columns:
-                rs = (data[sym].iloc[-1]/data["^KS11"].iloc[-1])/(data[sym].dropna().iloc[0]/data["^KS11"].dropna().iloc[0])*100
-                if rs > best_kpi_rs: best_kpi, best_kpi_rs = name, rs
-    except: pass
-    
+    if "^KS11" in data.columns:
+        valid_idx = data["^KS11"].dropna()
+        if not valid_idx.empty:
+            for name, sym in KOSPI_STOCKS.items():
+                if sym in data.columns:
+                    valid_sym = data[sym].dropna()
+                    if not valid_sym.empty:
+                        try:
+                            rs = (valid_sym.iloc[-1] / valid_idx.iloc[-1]) / (valid_sym.iloc[0] / valid_idx.iloc[0]) * 100
+                            if rs > best_kpi_rs: 
+                                best_kpi = name
+                                best_kpi_rs = float(rs)
+                        except: pass
+
     best_kdq, best_kdq_rs = "판단불가", -999
-    try:
-        for name, sym in KOSDAQ_STOCKS.items():
-            if sym in data.columns:
-                rs = (data[sym].iloc[-1]/data["^KQ11"].iloc[-1])/(data[sym].dropna().iloc[0]/data["^KQ11"].dropna().iloc[0])*100
-                if rs > best_kdq_rs: best_kdq, best_kdq_rs = name, rs
-    except: pass
+    if "^KQ11" in data.columns:
+        valid_idx = data["^KQ11"].dropna()
+        if not valid_idx.empty:
+            for name, sym in KOSDAQ_STOCKS.items():
+                if sym in data.columns:
+                    valid_sym = data[sym].dropna()
+                    if not valid_sym.empty:
+                        try:
+                            rs = (valid_sym.iloc[-1] / valid_idx.iloc[-1]) / (valid_sym.iloc[0] / valid_idx.iloc[0]) * 100
+                            if rs > best_kdq_rs: 
+                                best_kdq = name
+                                best_kdq_rs = float(rs)
+                        except: pass
 
     q1 = f"[원인] KOSPI ADR {kpi_adr}% ({kpi_stage}), KOSDAQ ADR {kdq_adr}% ({kdq_stage}) 판독.\n[결과] 지수 이평선과 ADR 에너지를 교차 검증한 결과, 현재 국면에 맞는 전략적 무기만 꺼내야 함."
-    q2 = f"[원인] 오늘 시장 대비 상대강도가 가장 강력한 주도주는 KOSPI '{best_kpi}'(RS: {best_kpi_rs:.1f}), KOSDAQ '{best_kdq}'(RS: {best_kdq_rs:.1f})임.\n[결과] 돈의 쏠림이 확인된 대장주 안에서만 타점을 노리며, RS가 낮은 종목은 철저히 배제함."
+    
+    rs_kpi_str = f"{best_kpi_rs:.1f}" if best_kpi_rs != -999 else "N/A"
+    rs_kdq_str = f"{best_kdq_rs:.1f}" if best_kdq_rs != -999 else "N/A"
+    q2 = f"[원인] 오늘 시장 대비 상대강도가 가장 강력한 주도주는 KOSPI '{best_kpi}'(RS: {rs_kpi_str}), KOSDAQ '{best_kdq}'(RS: {rs_kdq_str})임.\n[결과] 돈의 쏠림이 확인된 대장주 안에서만 타점을 노리며, RS가 낮은 종목은 철저히 배제함."
+    
     q3 = f"내일의 시나리오: {kpi_stage} 및 {kdq_stage} 국면이므로 " + ("공격적 리턴 매매" if "Stage 2" in str(kpi_stage) else "JH존 수비 매매" if "Stage 1" in str(kpi_stage) else "변곡 투매 매매") + "에 집중함."
     q4 = f"[원인] 이번 달 누적 수익 {cushion_val}만 원.\n[결과] " + ("수익 담보가 있으므로 주도주 눌림목에 공격적 비중 확대(불타기) 가능." if cushion_val > 0 else "쿠션이 없으므로 비중 50% 축소 및 철저한 원금 방어 모드 돌입.")
     return q1, q2, q3, q4
@@ -188,7 +204,6 @@ def generate_trader_view(kpi_stage, kdq_stage, cushion_val, data, kpi_adr, kdq_a
 # --- 📱 모바일 UI 구성 ---
 st.title("🦅 JH 모바일 타격대")
 
-# 🌟 상단 폴더 안에 '누적 수익' 입력칸 추가
 with st.expander("🕒 장전 시황 및 비중 조절", expanded=False):
     brief = get_briefing()
     if not brief:
@@ -203,7 +218,6 @@ data = get_main_data()
 k_adr, q_adr = fetch_real_adr()
 k_ui, q_ui, k_st, q_st = auto_market_stage_impl(k_adr, q_adr)
 
-# 🌟 모바일 탭을 3개로 분할
 t1, t2, t3 = st.tabs(["📊 시장&RS", "⚔️ 타점검색", "📝 복기"])
 
 with t1:
@@ -295,7 +309,6 @@ with t2:
         fibo_05 = actual_high - ((actual_high - lo) * 0.5)
         st.error(f"💣 **변곡(필살)**\n\n피보 0.5: **{fibo_05:,.0f}원**")
 
-# 🌟 모바일 전용 자동 복기 화면 렌더링
 with t3:
     st.subheader("📝 시스템 자동 복기")
     ans = generate_trader_view(k_st, q_st, cushion, data, k_adr, q_adr)
